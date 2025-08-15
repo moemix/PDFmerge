@@ -164,15 +164,65 @@ function Test-Installed {
 
 # qpdf via winget sicherstellen
 function Ensure-Qpdf {
+  param([string]$ToolsDir = 'C:\Tools')
+
+  # qpdf schon vorhanden?
   $q = Get-Command qpdf.exe -ErrorAction SilentlyContinue
-  if ($q) { W-Ok "qpdf bereits verfuegbar: $($q.Source)"; return }
-  $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-  if (-not $winget) { W-Warn "winget nicht gefunden. Ueberspringe qpdf-Installation."; return }
-  W-Info "Installiere qpdf per winget..."
-  $args = @('install','--id','QPDF.QPDF','-e','--source','winget','--accept-package-agreements','--accept-source-agreements','--silent')
-  $p = Start-Process -FilePath $winget.Source -ArgumentList $args -Wait -PassThru
-  if ($p.ExitCode -ne 0) { W-Warn ("winget ExitCode {0}. Fahre fort." -f $p.ExitCode) }
-  else { W-Ok "qpdf installiert." }
+  if ($q) { W-Ok ("qpdf bereits verfuegbar: {0}" -f $q.Source); return }
+
+  # winget robust finden (auch wenn PATH/Alias im Admin-Token fehlt)
+  $wingetExe = $null
+  $cands = @()
+  $gc = Get-Command winget.exe -ErrorAction SilentlyContinue
+  if ($gc) { $cands += $gc.Source }
+  $cands += "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
+  $cands += "$env:LOCALAPPDATA\Microsoft\Windows\WindowsApps\winget.exe"
+  $cands += "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller*\winget.exe"  # evtl. nicht auflistbar
+
+  foreach ($c in ($cands | Select-Object -Unique)) {
+    try { if ($c -and (Test-Path -LiteralPath $c)) { $wingetExe = $c; break } } catch {}
+  }
+
+  if ($wingetExe) {
+    W-Info "Installiere qpdf via winget..."
+    $args = @('install','QPDF.QPDF',
+              '--accept-package-agreements','--accept-source-agreements',
+              '--silent','--disable-interactivity')
+    $p = Start-Process -FilePath $wingetExe -ArgumentList $args -Wait -PassThru
+    if ($p.ExitCode -eq 0) { W-Ok "qpdf installiert (winget)."; return }
+    W-Warn ("winget ExitCode {0}. Wechsel auf portable Fallback." -f $p.ExitCode)
+  } else {
+    W-Warn "winget nicht gefunden (App Installer/Alias). Nutze portable Fallback."
+  }
+
+  # --- Portable Fallback von GitHub ---
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $api  = Invoke-WebRequest -UseBasicParsing -Uri 'https://api.github.com/repos/qpdf/qpdf/releases/latest'
+    $rel  = $api.Content | ConvertFrom-Json
+    $asset = $rel.assets | Where-Object {
+      $_.name -match 'msvc64.*\.zip$' -or $_.name -match 'mingw64.*\.zip$'
+    } | Select-Object -First 1
+    if (-not $asset) { throw "Kein passendes qpdf Release-Asset gefunden." }
+
+    $zip  = Join-Path $env:TEMP $asset.name
+    W-Info ("Lade qpdf portable: {0}" -f $asset.name)
+    Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $zip
+
+    $dest = Join-Path $ToolsDir 'qpdf'
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+
+    $qpdfPath = Get-ChildItem -Path $dest -Recurse -Filter qpdf.exe -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+    if (-not $qpdfPath) { throw "qpdf.exe nicht in ZIP gefunden." }
+
+    W-Ok ("qpdf portable eingerichtet: {0}" -f $qpdfPath)
+  }
+  catch {
+    W-Err ("Portable qpdf Setup fehlgeschlagen: {0}" -f $_.Exception.Message)
+  }
 }
 
 # SendTo-Verknuepfung
