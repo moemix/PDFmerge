@@ -1,10 +1,10 @@
 <# Install-MergePDF-SendTo.ps1
    Richtet PDF-Merge via "Senden an" ein (qpdf-only).
-   - Detection mit Auswahl: [R]einstall / [U]ninstall / [E]xit
-   - Installiert qpdf per winget (wenn möglich)
+   - Detection: [R]einstall / [U]ninstall / [E]xit
+   - winget-Install von qpdf (wenn moeglich)
    - Legt C:\Tools\Merge-PDF.ps1 und C:\Tools\Merge-PDF.cmd an
-   - Erstellt SendTo-Verknüpfung "PDFs zusammenführen"
-   - Keine Popups; Status im Terminal; Pause am Ende
+   - Erstellt SendTo-Verknuepfung "PDFs zusammenfuehren"
+   - Status im Terminal, Pause am Ende
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -14,22 +14,22 @@ function W-Ok($m){ Write-Host "[OK] $m" -ForegroundColor Green }
 function W-Warn($m){ Write-Host "[!!] $m" -ForegroundColor Yellow }
 function W-Err($m){ Write-Host "[ERR] $m" -ForegroundColor Red }
 
-# --- Admincheck / Self-elevate ---
+# Admincheck / Self-elevate
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
-  W-Warn "Starte mich neu mit Administratorrechten…"
+  W-Warn "Starte neu mit Administratorrechten..."
   Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","`"$PSCommandPath`""
   return
 }
 
-# --- Pfade ---
+# Pfade
 $toolsDir = 'C:\Tools'
 $ps1Path  = Join-Path $toolsDir 'Merge-PDF.ps1'
 $cmdPath  = Join-Path $toolsDir 'Merge-PDF.cmd'
 $sendTo   = [Environment]::GetFolderPath('SendTo')
-$lnkPath  = Join-Path $sendTo 'PDFs zusammenführen.lnk'
+$lnkPath  = Join-Path $sendTo 'PDFs zusammenfuehren.lnk'
 
-# --- Inhalte: Wrapper + Merge-Script (mit Temp-Ausgabe & Exclude Merged_*.pdf) ---
+# Inhalte: Wrapper + Merge-Script (robust, temp-output, exclude Merged_*.pdf)
 $cmdContent = @"
 @echo off
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ps1Path" %*
@@ -37,7 +37,7 @@ exit /b %ERRORLEVEL%
 "@
 
 $ps1Content = @'
-# Merge-PDF.ps1 — qpdf-only, Clipboard, Auto-Detect, Logging, robust bei OneDrive
+# Merge-PDF.ps1 - qpdf-only, Clipboard, Auto-Detect, Logging (robust)
 [CmdletBinding()]
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsPaths)
 
@@ -110,7 +110,7 @@ function Get-UniqueOutFile { param([string]$TargetDir,[string]$BaseName)
 
 try {
   $files = Resolve-PdfList -inputs $ArgsPaths
-  if (-not $files -or $files.Count -lt 2) { throw "Mindestens zwei PDF-Dateien nötig (oder ein Ordner mit ≥ 2 PDFs). Übergeben: $($ArgsPaths -join ', ')" }
+  if (-not $files -or $files.Count -lt 2) { throw "Mindestens zwei PDF-Dateien noetig (oder ein Ordner mit >= 2 PDFs). Uebergeben: $($ArgsPaths -join ', ')" }
 
   $qpdf = Find-Qpdf
   if (-not $qpdf) {
@@ -133,7 +133,7 @@ Log: $log
   Write-Host "qpdf: $qpdf"
   Write-Host ("Merging -> " + $outFile)
 
-  # Immer erst in TEMP schreiben, dann verschieben (vermeidet OneDrive/Unicode/Locks)
+  # erst in TEMP schreiben, dann verschieben (vermeidet OneDrive/Locks)
   $tempOut = Join-Path $env:TEMP ("qpdf_merge_{0}.pdf" -f ([guid]::NewGuid()))
   $args = @('--empty','--pages') + $files + @('--', $tempOut)
   & $qpdf @args
@@ -155,27 +155,27 @@ catch {
 finally { Stop-Transcript | Out-Null }
 '@
 
-# --- Detection ---
+# Detection
 function Test-Installed {
   $files = (Test-Path $ps1Path) -and (Test-Path $cmdPath)
   $lnk   = Test-Path $lnkPath
   return ($files -and $lnk)
 }
 
-# --- qpdf via winget sicherstellen ---
+# qpdf via winget sicherstellen
 function Ensure-Qpdf {
   $q = Get-Command qpdf.exe -ErrorAction SilentlyContinue
-  if ($q) { W-Ok "qpdf bereits verfügbar: $($q.Source)"; return }
+  if ($q) { W-Ok "qpdf bereits verfuegbar: $($q.Source)"; return }
   $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-  if (-not $winget) { W-Warn "winget nicht gefunden. Überspringe qpdf-Installation."; return }
-  W-Info "Installiere qpdf per winget…"
+  if (-not $winget) { W-Warn "winget nicht gefunden. Ueberspringe qpdf-Installation."; return }
+  W-Info "Installiere qpdf per winget..."
   $args = @('install','--id','QPDF.QPDF','-e','--source','winget','--accept-package-agreements','--accept-source-agreements','--silent')
   $p = Start-Process -FilePath $winget.Source -ArgumentList $args -Wait -PassThru
-  if ($p.ExitCode -ne 0) { W-Warn "winget ExitCode $($p.ExitCode). Fahre fort – Script findet qpdf ggf. trotzdem." }
+  if ($p.ExitCode -ne 0) { W-Warn ("winget ExitCode {0}. Fahre fort." -f $p.ExitCode) }
   else { W-Ok "qpdf installiert." }
 }
 
-# --- SendTo-Verknüpfung ---
+# SendTo-Verknuepfung
 function New-SendToShortcut {
   if (-not (Test-Path $sendTo)) { throw "SendTo-Verzeichnis nicht gefunden: $sendTo" }
   $shell = New-Object -ComObject WScript.Shell
@@ -183,7 +183,7 @@ function New-SendToShortcut {
   $sc.TargetPath = $cmdPath
   $sc.WorkingDirectory = $toolsDir
   $sc.IconLocation = 'imageres.dll,-5302'
-  $sc.Description = 'Ausgewählte PDFs (oder Ordner) zu einer PDF zusammenführen'
+  $sc.Description = 'Ausgewaehlte PDFs (oder Ordner) zu einer PDF zusammenfuehren'
   $sc.Arguments = ''
   $sc.Save()
 }
@@ -194,33 +194,33 @@ function Remove-Installation {
   if (Test-Path $cmdPath) { Remove-Item $cmdPath -Force -ErrorAction SilentlyContinue }
 }
 
-# --- Interaktiver Flow ---
+# Interaktiver Flow
 if (Test-Installed) {
   W-Info "Bereits installiert erkannt."
   Write-Host "Optionen: [R]einstall / [U]ninstall / [E]xit" -ForegroundColor Yellow
   switch ((Read-Host "Bitte Auswahl").ToUpperInvariant()) {
-    'U' { W-Info "Deinstallation…"; Remove-Installation; W-Ok "Deinstallation abgeschlossen."; Read-Host "Weiter mit Enter…"; return }
-    'R' { W-Info "Neuinstallation wird durchgeführt…" }
-    default { W-Info "Abbruch."; Read-Host "Weiter mit Enter…"; return }
+    'U' { W-Info "Deinstallation..."; Remove-Installation; W-Ok "Deinstallation abgeschlossen."; Read-Host "Weiter mit Enter..."; return }
+    'R' { W-Info "Neuinstallation wird durchgefuehrt..." }
+    default { W-Info "Abbruch."; Read-Host "Weiter mit Enter..."; return }
   }
 }
 
-# --- Installation ---
-W-Info "Erzeuge $toolsDir…"
+# Installation
+W-Info "Erzeuge $toolsDir..."
 New-Item -Path $toolsDir -ItemType Directory -Force | Out-Null
 
-W-Info "Schreibe $ps1Path…"
+W-Info "Schreibe $ps1Path..."
 Set-Content -Path $ps1Path -Value $ps1Content -Encoding UTF8
 
-W-Info "Schreibe $cmdPath…"
+W-Info "Schreibe $cmdPath..."
 Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
 
-W-Info "Erzeuge SendTo-Verknüpfung…"
+W-Info "Erzeuge SendTo-Verknuepfung..."
 New-SendToShortcut
-W-Ok "SendTo: 'PDFs zusammenführen' eingerichtet."
+W-Ok "SendTo: 'PDFs zusammenfuehren' eingerichtet."
 
 Ensure-Qpdf
 
 W-Ok "Installation abgeschlossen."
-Write-Host "Benutzung: Dateien/Ordner markieren → Rechtsklick → Senden an → 'PDFs zusammenführen'." -ForegroundColor Gray
-Read-Host "Weiter mit Enter…"
+Write-Host "Benutzung: Dateien/Ordner markieren -> Rechtsklick -> Senden an -> 'PDFs zusammenfuehren'." -ForegroundColor Gray
+Read-Host "Weiter mit Enter..."
