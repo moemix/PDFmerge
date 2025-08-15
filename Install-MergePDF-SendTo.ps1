@@ -37,7 +37,7 @@ exit /b %ERRORLEVEL%
 "@
 
 $ps1Content = @'
-# Merge-PDF.ps1 - qpdf-only, Clipboard, Auto-Detect, Logging (robust)
+# Merge-PDF.ps1 - qpdf-only, robust fuer WinPS 5.1 (keine Ternaries)
 [CmdletBinding()]
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsPaths)
 
@@ -58,8 +58,11 @@ function Resolve-PdfList {
   Write-Host ("Resolved: " + ($resolved -join ' | '))
 
   function Is-Dir([string]$path) {
-    try { if ([IO.Directory]::Exists($path)) { return $true }
-          $it = Get-Item -LiteralPath $path -ErrorAction Stop; return [bool]$it.PSIsContainer } catch { return $false }
+    try {
+      if ([IO.Directory]::Exists($path)) { return $true }
+      $it = Get-Item -LiteralPath $path -ErrorAction Stop
+      return [bool]$it.PSIsContainer
+    } catch { return $false }
   }
 
   if ($resolved.Count -eq 1 -and (Is-Dir $resolved[0])) {
@@ -71,7 +74,7 @@ function Resolve-PdfList {
   }
 
   $files = $resolved | Where-Object { $_ -match '\.pdf$' -and (Test-Path -LiteralPath $_) }
-  $list = $files | Sort-Object -Unique
+  $list  = $files | Sort-Object -Unique
   Write-Host ("File mode, PDFs: " + ($list -join ' | '))
   return $list
 }
@@ -91,26 +94,41 @@ function Find-Qpdf {
     "$env:LOCALAPPDATA\Programs\qpdf*\bin\qpdf.exe"
   ) | Where-Object { $_ }
   foreach ($g in $searchGlobs) {
-    try { $hit = Get-ChildItem -Path $g -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if ($hit) { $candidates += $hit } } catch { }
+    try {
+      $hit = Get-ChildItem -Path $g -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+      if ($hit) { $candidates += $hit }
+    } catch { }
   }
   foreach ($hive in 'HKLM','HKCU') {
     $regPath = "$hive:SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\qpdf.exe"
-    try { $ap = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
-          if ($ap -and $ap.'(Default)') { $candidates += $ap.'(Default)' }
-          elseif ($ap -and $ap.Path) { $candidates += $ap.Path } } catch { }
+    try {
+      $ap = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
+      if ($ap -and $ap.'(Default)') { $candidates += $ap.'(Default)' }
+      elseif ($ap -and $ap.Path)    { $candidates += $ap.Path }
+    } catch { }
   }
-  foreach ($c in ($candidates | Select-Object -Unique)) { if ($c -and (Test-Path -LiteralPath $c)) { return $c } }
+  foreach ($c in ($candidates | Select-Object -Unique)) {
+    if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+  }
   return $null
 }
 
-function Get-UniqueOutFile { param([string]$TargetDir,[string]$BaseName)
-  $i=0; while ($true) { $n = ($i -eq 0) ? "$BaseName.pdf" : ("{0}_{1}.pdf" -f $BaseName,$i)
-    $f = Join-Path $TargetDir $n; if (-not (Test-Path -LiteralPath $f)) { return $f }; $i++ } }
+function Get-UniqueOutFile {
+  param([string]$TargetDir,[string]$BaseName) # ohne .pdf
+  $i = 0
+  while ($true) {
+    if ($i -eq 0) { $name = "$BaseName.pdf" } else { $name = "{0}_{1}.pdf" -f $BaseName,$i }
+    $full = Join-Path $TargetDir $name
+    if (-not (Test-Path -LiteralPath $full)) { return $full }
+    $i++
+  }
+}
 
 try {
   $files = Resolve-PdfList -inputs $ArgsPaths
-  if (-not $files -or $files.Count -lt 2) { throw "Mindestens zwei PDF-Dateien noetig (oder ein Ordner mit >= 2 PDFs). Uebergeben: $($ArgsPaths -join ', ')" }
+  if (-not $files -or $files.Count -lt 2) {
+    throw ("Mindestens zwei PDF-Dateien noetig (oder ein Ordner mit >= 2 PDFs). Uebergeben: {0}" -f ($ArgsPaths -join ', '))
+  }
 
   $qpdf = Find-Qpdf
   if (-not $qpdf) {
@@ -123,17 +141,17 @@ Log: $log
 "@
   }
 
-  $first = Get-Item -LiteralPath $files[0]
+  $first     = Get-Item -LiteralPath $files[0]
   $targetDir = $first.Directory.FullName
-  $folder = Split-Path -Path $targetDir -Leaf
-  $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
-  $baseName = "Merged_{0}_{1}" -f $folder, $stamp
-  $outFile = Get-UniqueOutFile -TargetDir $targetDir -BaseName $baseName
+  $folder    = Split-Path -Path $targetDir -Leaf
+  $stamp     = Get-Date -Format "yyyy-MM-dd_HHmm"
+  $baseName  = "Merged_{0}_{1}" -f $folder, $stamp
+  $outFile   = Get-UniqueOutFile -TargetDir $targetDir -BaseName $baseName
 
   Write-Host "qpdf: $qpdf"
   Write-Host ("Merging -> " + $outFile)
 
-  # erst in TEMP schreiben, dann verschieben (vermeidet OneDrive/Locks)
+  # erst nach TEMP schreiben, dann verschieben
   $tempOut = Join-Path $env:TEMP ("qpdf_merge_{0}.pdf" -f ([guid]::NewGuid()))
   $args = @('--empty','--pages') + $files + @('--', $tempOut)
   & $qpdf @args
@@ -141,12 +159,19 @@ Log: $log
   if (-not (Test-Path -LiteralPath $tempOut)) { throw "Zwischendatei nicht gefunden: $tempOut" }
 
   try { Move-Item -LiteralPath $tempOut -Destination $outFile -Force }
-  catch { $outFile = Get-UniqueOutFile -TargetDir $targetDir -BaseName ($baseName + "_m"); Move-Item -LiteralPath $tempOut -Destination $outFile -Force }
+  catch {
+    $outFile = Get-UniqueOutFile -TargetDir $targetDir -BaseName ($baseName + "_m")
+    Move-Item -LiteralPath $tempOut -Destination $outFile -Force
+  }
 
-  $cbOK = $false
-  try { Set-Clipboard -Value $outFile -ErrorAction Stop; $cbOK=$true } catch {
-    try { $clip = Get-Command clip.exe -ErrorAction SilentlyContinue; if ($clip){ $outFile | & $clip.Source; $cbOK=$true } } catch { } }
-  $msg = "Fertig:" + $NL + $outFile + ($cbOK ? ($NL + "(Kopiert in die Zwischenablage)") : "")
+  # Clipboard
+  $clipboardOk = $false
+  try { Set-Clipboard -Value $outFile -ErrorAction Stop; $clipboardOk = $true } catch {
+    try { $clip = Get-Command clip.exe -ErrorAction SilentlyContinue; if ($clip) { $outFile | & $clip.Source; $clipboardOk = $true } } catch { }
+  }
+
+  $msg = "Fertig:" + $NL + $outFile
+  if ($clipboardOk) { $msg += $NL + "(Kopiert in die Zwischenablage)" }
   [System.Windows.Forms.MessageBox]::Show($msg,"PDF Merge",'OK','Information') | Out-Null
 }
 catch {
